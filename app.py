@@ -1,33 +1,32 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Request
 import base64
 import fitz  # PyMuPDF
 import io
 
-app = FastAPI()
+app = FastAPI(title="PDF Image Replace API")
 
-# ---------- MODELS ----------
-
-class PdfBase64(BaseModel):
-    pdf_base64: str
-
-class ReplaceImageRequest(BaseModel):
-    pdf_base64: str
-    page_number: int
-    image_xref: int
-    new_image_base64: str
-
-# ---------- ENDPOINTS ----------
-
+# -----------------------
+# /list-images endpoint
+# -----------------------
 @app.post("/list-images")
-def list_images(data: PdfBase64):
+async def list_images(request: Request):
     try:
-        pdf_bytes = base64.b64decode(data.pdf_base64)
+        # read JSON manually to avoid Pydantic ASCII issues
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+        if not pdf_base64:
+            return {"error": "pdf_base64 missing"}
 
+        # decode Base64 to binary
+        pdf_bytes = base64.b64decode(pdf_base64)
+
+        # quick PDF sanity check
         if not pdf_bytes.startswith(b"%PDF"):
             return {"error": "Not a valid PDF"}
 
+        # open PDF
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
         images = []
         for page_index in range(len(doc)):
             page = doc[page_index]
@@ -45,20 +44,34 @@ def list_images(data: PdfBase64):
         return {"error": str(e)}
 
 
+# -----------------------
+# /replace-image endpoint
+# -----------------------
 @app.post("/replace-image")
-def replace_image(data: ReplaceImageRequest):
-    pdf_bytes = base64.b64decode(data.pdf_base64)
-    new_image_bytes = base64.b64decode(data.new_image_base64)
+async def replace_image(request: Request):
+    try:
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+        page_number = body.get("page_number")
+        image_xref = body.get("image_xref")
+        new_image_base64 = body.get("new_image_base64")
 
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    page = doc[data.page_number]
+        if not all([pdf_base64, page_number is not None, image_xref is not None, new_image_base64]):
+            return {"error": "Missing required fields"}
 
-    page.replace_image(data.image_xref, stream=new_image_bytes)
+        pdf_bytes = base64.b64decode(pdf_base64)
+        new_image_bytes = base64.b64decode(new_image_base64)
 
-    output = io.BytesIO()
-    doc.save(output)
-    doc.close()
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page = doc[page_number]
 
-    return {
-        "pdf_base64": base64.b64encode(output.getvalue()).decode()
-    }
+        page.replace_image(image_xref, stream=new_image_bytes)
+
+        output = io.BytesIO()
+        doc.save(output)
+        doc.close()
+
+        return {"pdf_base64": base64.b64encode(output.getvalue()).decode()}
+
+    except Exception as e:
+        return {"error": str(e)}
