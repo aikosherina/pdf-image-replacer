@@ -1,32 +1,26 @@
 from fastapi import FastAPI, Request
 import base64
-import fitz  # PyMuPDF
-import io
+import fitz
 
-app = FastAPI(title="PDF Image Replace API")
+app = FastAPI()
 
-# -----------------------
-# /list-images endpoint
-# -----------------------
 @app.post("/list-images")
 async def list_images(request: Request):
+    body = await request.json()
+    pdf_base64 = body.get("pdf_base64")
+    if not pdf_base64:
+        return {"error": "pdf_base64 missing"}
+
     try:
-        # read JSON manually to avoid Pydantic ASCII issues
-        body = await request.json()
-        pdf_base64 = body.get("pdf_base64")
-        if not pdf_base64:
-            return {"error": "pdf_base64 missing"}
-
-        # decode Base64 to binary
         pdf_bytes = base64.b64decode(pdf_base64)
+    except Exception as e:
+        return {"error": f"Base64 decode error: {str(e)}"}
 
-        # quick PDF sanity check
-        if not pdf_bytes.startswith(b"%PDF"):
-            return {"error": "Not a valid PDF"}
+    if not pdf_bytes.startswith(b"%PDF"):
+        return {"error": "Not a valid PDF"}
 
-        # open PDF
+    try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
         images = []
         for page_index in range(len(doc)):
             page = doc[page_index]
@@ -39,9 +33,8 @@ async def list_images(request: Request):
                 })
         doc.close()
         return {"images": images}
-
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"PyMuPDF error: {str(e)}"}
 
 
 # -----------------------
