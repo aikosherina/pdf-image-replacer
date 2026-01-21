@@ -21,23 +21,28 @@ class ReplaceImageRequest(BaseModel):
 
 @app.post("/list-images")
 def list_images(data: PdfBase64):
-    pdf_bytes = base64.b64decode(data.pdf_base64)
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        pdf_bytes = base64.b64decode(data.pdf_base64)
 
-    images = []
+        if not pdf_bytes.startswith(b"%PDF"):
+            return {"error": "Not a valid PDF"}
 
-    for page_index in range(len(doc)):
-        page = doc[page_index]
-        for img in page.get_images(full=True):
-            images.append({
-                "page_number": page_index,
-                "image_xref": img[0],
-                "width": img[2],
-                "height": img[3]
-            })
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        images = []
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+            for img in page.get_images(full=True):
+                images.append({
+                    "page_number": page_index,
+                    "image_xref": img[0],
+                    "width": img[2],
+                    "height": img[3]
+                })
+        doc.close()
+        return {"images": images}
 
-    doc.close()
-    return {"images": images}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/replace-image")
