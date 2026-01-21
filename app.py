@@ -6,22 +6,29 @@ app = FastAPI()
 
 @app.post("/list-images")
 async def list_images(request: Request):
-    body = await request.json()
-    pdf_base64 = body.get("pdf_base64")
-    if not pdf_base64:
-        return {"error": "pdf_base64 missing"}
-
     try:
-        pdf_bytes = base64.b64decode(pdf_base64)
-    except Exception as e:
-        return {"error": f"Base64 decode error: {str(e)}"}
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+        if not pdf_base64:
+            return {"error": "pdf_base64 missing"}
 
-    if not pdf_bytes.startswith(b"%PDF"):
-        return {"error": "Not a valid PDF"}
+        # --- FIX: convert to bytes safely ---
+        if isinstance(pdf_base64, str):
+            # remove whitespace, newlines, then encode as ASCII bytes
+            pdf_base64_bytes = pdf_base64.strip().encode("ascii")
+        else:
+            pdf_base64_bytes = pdf_base64
 
-    try:
+        # decode base64
+        pdf_bytes = base64.b64decode(pdf_base64_bytes)
+
+        # quick sanity check
+        if not pdf_bytes.startswith(b"%PDF"):
+            return {"error": "Not a valid PDF"}
+
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         images = []
+
         for page_index in range(len(doc)):
             page = doc[page_index]
             for img in page.get_images(full=True):
@@ -33,9 +40,9 @@ async def list_images(request: Request):
                 })
         doc.close()
         return {"images": images}
-    except Exception as e:
-        return {"error": f"PyMuPDF error: {str(e)}"}
 
+    except Exception as e:
+        return {"error": f"Base64 decode or PyMuPDF error: {str(e)}"}
 
 # -----------------------
 # /replace-image endpoint
