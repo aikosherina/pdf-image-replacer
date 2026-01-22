@@ -53,51 +53,51 @@ async def list_images(request: Request):
 # -----------------------
 @app.post("/replace-image")
 async def replace_image(request: Request):
+    """
+    JSON body should include:
+    {
+        "pdf_base64": "JVBERi0x...",
+        "page_number": 0,
+        "image_xref": 10,
+        "new_image_base64": "/9j/4AAQSkZJRgABAQAAAQABAAD..." 
+    }
+    """
     try:
         body = await request.json()
-
         pdf_base64 = body.get("pdf_base64")
-        new_image_base64 = body.get("new_image_base64")
         page_number = body.get("page_number")
         image_xref = body.get("image_xref")
+        new_image_base64 = body.get("new_image_base64")
 
-        if pdf_base64 is None or new_image_base64 is None:
-            return {"error": "pdf_base64 and new_image_base64 are required"}
+        if not all([pdf_base64, page_number is not None, image_xref, new_image_base64]):
+            return {"error": "Missing required fields"}
 
-        if page_number is None or image_xref is None:
-            return {"error": "page_number and image_xref are required"}
-
-        # 🔥 Clean Base64 (SAME AS /list-images)
-        pdf_base64 = BASE64_CLEAN_RE.sub('', pdf_base64)
-        new_image_base64 = BASE64_CLEAN_RE.sub('', new_image_base64)
-
-        # Decode Base64
-        pdf_bytes = base64.b64decode(pdf_base64, validate=False)
-        image_bytes = base64.b64decode(new_image_base64, validate=False)
-
-        if not pdf_bytes.startswith(b"%PDF"):
-            return {"error": "Invalid PDF data after Base64 cleaning"}
-
+        # Decode PDF bytes
+        pdf_bytes = base64.b64decode(pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-        if page_number < 0 or page_number >= len(doc):
-            return {"error": "Invalid page_number"}
+        if page_number >= len(doc):
+            return {"error": "page_number out of range"}
 
         page = doc[page_number]
 
-        # Replace the image returned by /list-images
-        page.replace_image(image_xref, stream=image_bytes)
+        # Decode new image bytes
+        new_image_bytes = base64.b64decode(new_image_base64)
 
-        output = io.BytesIO()
-        doc.save(output)
+        # Replace image
+        page.replace_image(image_xref, stream=new_image_bytes)
+
+        # Save new PDF
+        new_pdf_bytes = doc.write()
         doc.close()
 
-        return {
-            "pdf_base64": base64.b64encode(output.getvalue()).decode("ascii")
-        }
+        # Encode PDF to Base64
+        new_pdf_base64 = base64.b64encode(new_pdf_bytes).decode("ascii")
+
+        return {"pdf_base64": new_pdf_base64}
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": "Unexpected error", "exception": str(e)}
 
 @app.get("/health")
 def health():
