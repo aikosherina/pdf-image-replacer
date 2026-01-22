@@ -1,39 +1,36 @@
 from fastapi import FastAPI, Request
 import fitz
 import base64
-import re
 
 app = FastAPI()
-
-# Regex to remove any non-Base64 characters
-BASE64_CLEAN_RE = re.compile(r'[^A-Za-z0-9+/=]')
 
 @app.post("/list-images")
 async def list_images(request: Request):
     try:
         body = await request.json()
-        pdf_base64 = body.get("pdf_base64")
+        # grab the contentBytes exactly as string
+        pdf_base64 = body.get("contentBytes")
 
         if not pdf_base64:
-            return {"error": "pdf_base64 missing"}
+            return {"error": "contentBytes missing"}
 
-        # 🔒 Clean the Base64 string to remove non-ASCII characters
-        cleaned_base64 = BASE64_CLEAN_RE.sub('', pdf_base64)
-
+        # decode Base64 directly, no .decode() or cleaning
         try:
-            pdf_bytes = base64.b64decode(cleaned_base64, validate=False)
+            pdf_bytes = base64.b64decode(pdf_base64)
         except Exception as e:
             return {"error": "Base64 decode failed", "exception": str(e)}
 
+        # verify PDF header
         if not pdf_bytes.startswith(b"%PDF"):
-            return {"error": "Not a valid PDF after Base64 cleaning"}
+            return {
+                "error": "Not a valid PDF after Base64 decode",
+                "first_bytes": pdf_bytes[:20].hex()
+            }
 
-        try:
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        except Exception as e:
-            return {"error": "PyMuPDF failed to open PDF", "exception": str(e)}
-
+        # open PDF and list images
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         images = []
+
         for page_index in range(len(doc)):
             page = doc[page_index]
             for img in page.get_images(full=True):
@@ -45,11 +42,9 @@ async def list_images(request: Request):
                 })
 
         doc.close()
-
         return {"images": images}
 
     except Exception as e:
-        # Catch-all for unexpected errors
         return {"error": "Unexpected error", "exception": str(e)}
 
     
