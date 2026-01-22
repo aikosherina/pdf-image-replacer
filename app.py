@@ -103,3 +103,8 @@ async def replace_image(request: Request):
 
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "version": "debug-2026-01-22-v1"}
+
