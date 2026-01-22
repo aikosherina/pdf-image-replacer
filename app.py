@@ -9,43 +9,61 @@ BASE64_CLEAN_RE = re.compile(r'[^A-Za-z0-9+/=]')
 
 @app.post("/list-images")
 async def list_images(request: Request):
+    body = await request.json()
+    pdf_base64 = body.get("pdf_base64")
+
+    if not pdf_base64:
+        return {"error": "pdf_base64 missing"}
+
+    # Clean Base64 (Power Automate Unicode fix)
+    cleaned_base64 = BASE64_CLEAN_RE.sub('', pdf_base64)
+
     try:
-        body = await request.json()
-        pdf_base64 = body.get("pdf_base64")
-
-        if not pdf_base64:
-            return {"error": "pdf_base64 missing"}
-
-        # 🔥 CRITICAL FIX: clean invalid characters
-        if isinstance(pdf_base64, str):
-            pdf_base64 = BASE64_CLEAN_RE.sub('', pdf_base64)
-
-        # decode Base64 safely
-        pdf_bytes = base64.b64decode(pdf_base64, validate=False)
-
-        # sanity check
-        if not pdf_bytes.startswith(b"%PDF"):
-            return {"error": "Not a valid PDF after Base64 cleaning"}
-
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-        images = []
-        for page_index in range(len(doc)):
-            page = doc[page_index]
-            for img in page.get_images(full=True):
-                images.append({
-                    "page_number": page_index,
-                    "image_xref": img[0],
-                    "width": img[2],
-                    "height": img[3]
-                })
-
-        doc.close()
-        return {"images": images}
-
+        pdf_bytes = base64.b64decode(cleaned_base64, validate=False)
     except Exception as e:
-        return {"error": str(e)}
-        
+        return {
+            "error": "Base64 decode failed",
+            "exception": str(e),
+            "base64_length": len(cleaned_base64)
+        }
+
+    # 🔍 TEMP DEBUG — REMOVE AFTER TESTING
+    debug_info = {
+        "original_base64_length": len(pdf_base64),
+        "cleaned_base64_length": len(cleaned_base64),
+        "pdf_bytes_length": len(pdf_bytes),
+        "starts_with_pdf": pdf_bytes.startswith(b"%PDF"),
+        "first_20_bytes_hex": pdf_bytes[:20].hex()
+    }
+
+    if not pdf_bytes.startswith(b"%PDF"):
+        return {
+            "error": "Not a valid PDF after Base64 cleaning",
+            "debug": debug_info
+        }
+
+    # Normal logic (will run only if PDF is valid)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    images = []
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+        for img in page.get_images(full=True):
+            images.append({
+                "page_number": page_index,
+                "image_xref": img[0],
+                "width": img[2],
+                "height": img[3]
+            })
+
+    doc.close()
+
+    # Return images + debug (remove debug later)
+    return {
+        "images": images,
+        "debug": debug_info
+    }
+    
 # -----------------------
 # /replace-image endpoint
 # -----------------------
