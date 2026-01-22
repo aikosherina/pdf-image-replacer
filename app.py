@@ -8,11 +8,11 @@ app = FastAPI()
 async def list_images(request: Request):
     try:
         body = await request.json()
-        # grab the contentBytes exactly as string
-        pdf_base64 = body.get("contentBytes")
+        pdf_base64 = body.get("pdf_base64")  # match the key sent from Power Automate
+
 
         if not pdf_base64:
-            return {"error": "contentBytes missing"}
+            return {"error": "pdf_base64 missing"}
 
         # decode Base64 directly, no .decode() or cleaning
         try:
