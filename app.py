@@ -52,49 +52,31 @@ async def list_images(request: Request):
 # /replace-image endpoint
 # -----------------------
 @app.post("/replace-image")
-async def replace_image(request: Request):
-    """
-    JSON body should include:
-    {
-        "pdf_base64": "JVBERi0x...",
-        "page_number": 0,
-        "image_xref": 10,
-        "new_image_base64": "/9j/4AAQSkZJRgABAQAAAQABAAD..." 
-    }
-    """
+def replace_image(payload: dict):
     try:
-        body = await request.json()
-        pdf_base64 = body.get("pdf_base64")
-        page_number = body.get("page_number")
-        image_xref = body.get("image_xref")
-        new_image_base64 = body.get("new_image_base64")
+        pdf_base64 = payload.get("pdf_base64")
+        page_number = payload.get("page_number")
+        image_xref = payload.get("image_xref")
+        new_image_base64 = payload.get("new_image_base64")
 
-        if not all([pdf_base64, page_number is not None, image_xref, new_image_base64]):
-            return {"error": "Missing required fields"}
-
-        # Decode PDF bytes
+        # Decode PDF Base64 to bytes
         pdf_bytes = base64.b64decode(pdf_base64)
+        
+        # Open PDF from bytes
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-        if page_number >= len(doc):
-            return {"error": "page_number out of range"}
-
         page = doc[page_number]
 
-        # Decode new image bytes
+        # Decode new image
         new_image_bytes = base64.b64decode(new_image_base64)
-
-        # Replace image
+        # Replace image (simplified)
         page.replace_image(image_xref, stream=new_image_bytes)
 
-        # Save new PDF
-        new_pdf_bytes = doc.write()
+        # Save modified PDF to bytes
+        out_bytes = doc.write()
         doc.close()
 
-        # Encode PDF to Base64
-        new_pdf_base64 = base64.b64encode(new_pdf_bytes).decode("ascii")
-
-        return {"pdf_base64": new_pdf_base64}
+        # Return Base64
+        return {"pdf_base64": base64.b64encode(out_bytes).decode()}
 
     except Exception as e:
         return {"error": "Unexpected error", "exception": str(e)}
