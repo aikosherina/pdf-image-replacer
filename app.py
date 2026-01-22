@@ -50,7 +50,7 @@ async def list_images(request: Request):
 
     except Exception as e:
         # Catch-all for unexpected errors
-        return {"error": "Unexpected error", "exception": str(e)}}
+        return {"error": "Unexpected error", "exception": str(e)}
 
     
 # -----------------------
