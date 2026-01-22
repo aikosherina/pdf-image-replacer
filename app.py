@@ -1,31 +1,37 @@
 from fastapi import FastAPI, Request
+import fitz
 import base64
-import fitz  # PyMuPDF
-import io
+import re
 
-app = FastAPI(title="PDF Image Replace API")
+app = FastAPI()
 
-# -----------------------
-# /list-images endpoint
-# -----------------------
+# Regex to remove any non-Base64 characters
+BASE64_CLEAN_RE = re.compile(r'[^A-Za-z0-9+/=]')
+
 @app.post("/list-images")
 async def list_images(request: Request):
     try:
-        # read JSON manually to avoid Pydantic ASCII issues
         body = await request.json()
         pdf_base64 = body.get("pdf_base64")
+
         if not pdf_base64:
             return {"error": "pdf_base64 missing"}
 
-        # decode Base64 to binary
-        pdf_bytes = base64.b64decode(pdf_base64)
+        # 🔒 Clean the Base64 string to remove non-ASCII characters
+        cleaned_base64 = BASE64_CLEAN_RE.sub('', pdf_base64)
 
-        # quick PDF sanity check
+        try:
+            pdf_bytes = base64.b64decode(cleaned_base64, validate=False)
+        except Exception as e:
+            return {"error": "Base64 decode failed", "exception": str(e)}
+
         if not pdf_bytes.startswith(b"%PDF"):
-            return {"error": "Not a valid PDF"}
+            return {"error": "Not a valid PDF after Base64 cleaning"}
 
-        # open PDF
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        except Exception as e:
+            return {"error": "PyMuPDF failed to open PDF", "exception": str(e)}
 
         images = []
         for page_index in range(len(doc)):
@@ -37,11 +43,14 @@ async def list_images(request: Request):
                     "width": img[2],
                     "height": img[3]
                 })
+
         doc.close()
+
         return {"images": images}
 
     except Exception as e:
-        return {"error": str(e)}
+        # Catch-all for unexpected errors
+        return {"error": "Unexpected error", "exception": str(e)}}
 
     
 # -----------------------
