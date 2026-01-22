@@ -43,7 +43,7 @@ async def list_images(request: Request):
 
     except Exception as e:
         return {"error": f"Base64 decode or PyMuPDF error: {str(e)}"}
-
+        
 # -----------------------
 # /replace-image endpoint
 # -----------------------
