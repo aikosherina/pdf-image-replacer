@@ -52,34 +52,46 @@ async def list_images(request: Request):
 # /replace-image endpoint
 # -----------------------
 @app.post("/replace-image")
-def replace_image(payload: dict):
+async def replace_image(request: Request):
     try:
-        pdf_base64 = payload.get("pdf_base64")
-        page_number = payload.get("page_number")
-        image_xref = payload.get("image_xref")
-        new_image_base64 = payload.get("new_image_base64")
+        body = await request.json()
+        pdf_input = body["pdf_base64"]
 
-        # Decode PDF Base64 to bytes
-        pdf_bytes = base64.b64decode(pdf_base64)
-        
-        # Open PDF from bytes
+        # 🔥 KEY FIX: detect Base64 vs binary-text
+        if isinstance(pdf_input, str) and pdf_input.strip().startswith("%PDF"):
+            # Power Automate already decoded it
+            pdf_bytes = pdf_input.encode("latin1")
+        else:
+            # True Base64
+            pdf_bytes = base64.b64decode(pdf_input.encode("ascii"))
+
+        if not pdf_bytes.startswith(b"%PDF"):
+            return {
+                "error": "Not a valid PDF",
+                "first_bytes": pdf_bytes[:20].hex()
+            }
+
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        page = doc[page_number]
 
-        # Decode new image
-        new_image_bytes = base64.b64decode(new_image_base64)
-        # Replace image (simplified)
-        page.replace_image(image_xref, stream=new_image_bytes)
+        page = doc[body["page_number"]]
 
-        # Save modified PDF to bytes
+        new_image_b64 = body["new_image_base64"]
+        new_image_bytes = base64.b64decode(new_image_b64.encode("ascii"))
+
+        page.replace_image(body["image_xref"], stream=new_image_bytes)
+
         out_bytes = doc.write()
         doc.close()
 
-        # Return Base64
-        return {"pdf_base64": base64.b64encode(out_bytes).decode()}
+        return {
+            "pdf_base64": base64.b64encode(out_bytes).decode("ascii")
+        }
 
     except Exception as e:
-        return {"error": "Unexpected error", "exception": str(e)}
+        return {
+            "error": "Unexpected error",
+            "exception": str(e)
+        }
 
 @app.get("/health")
 def health():
