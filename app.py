@@ -50,21 +50,85 @@ async def list_images(request: Request):
 # -----------------------
 # /list-drawings endpoint
 # -----------------------
+def rect_union(rects: List[fitz.Rect]) -> fitz.Rect:
+    """Return the union rectangle covering all input rectangles."""
+    if not rects:
+        return None
+    r = rects[0]
+    for rr in rects[1:]:
+        r |= rr  # union operator in PyMuPDF
+    return r
+
+def group_nearby_shapes(shapes: List[Dict], max_distance=10) -> List[Dict]:
+    """
+    Group shapes that are close to each other (within max_distance in points)
+    to form combined candidates (useful for logos made of multiple small parts).
+    """
+    groups = []
+    for shape in shapes:
+        rect = fitz.Rect(shape['rect'])
+        placed = False
+        for group in groups:
+            group_rect = fitz.Rect(group['rect'])
+            # If distance between group and shape is small, merge
+            if (rect.intersects(group_rect) or
+                rect.distance_to_rect(group_rect) < max_distance):
+                # Merge rects
+                new_rect = rect_union([group_rect, rect])
+                group['rect'] = [new_rect.x0, new_rect.y0, new_rect.x1, new_rect.y1]
+                # Keep track of all shape types combined (optional)
+                group['types'].add(shape['type'])
+                placed = True
+                break
+        if not placed:
+            groups.append({
+                'rect': shape['rect'],
+                'types': {shape['type']}
+            })
+    # Flatten types set back to string or join if needed
+    for group in groups:
+        group['type'] = ','.join(sorted(group['types']))
+        del group['types']
+    return groups
+
 @app.post("/list-drawings")
 async def list_drawings(request: Request):
-    body = await request.json()
-    pdf_bytes = base64.b64decode(body["pdf_base64"])
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        data = await request.json()
+        pdf_base64 = data.get('pdf_base64')
+        if not pdf_base64:
+            return {"error": "Missing pdf_base64 in request"}
 
-    out = []
-    for i, page in enumerate(doc):
-        for d in page.get_drawings():
-            out.append({
-                "page": i,
-                "rect": list(d["rect"]),
-                "type": d["type"]
-            })
-    return out
+        pdf_bytes = base64.b64decode(pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        all_shapes = []
+
+        # Extract vector drawings from all pages
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            drawings = page.get_drawings()
+            for d in drawings:
+                # d['type'] can be 'f', 's', 'fs' etc
+                # Capture only relevant types
+                if d['type'].lower() in ('f', 'fs', 's'):
+                    rect = d.get('rect', None)
+                    if rect:
+                        # rect is a fitz.Rect, convert to list [x0, y0, x1, y1]
+                        rect_list = [rect.x0, rect.y0, rect.x1, rect.y1]
+                        all_shapes.append({
+                            'page_number': page_num,
+                            'type': d['type'].lower(),
+                            'rect': rect_list
+                        })
+
+        # Group nearby shapes to combine fragmented logos
+        grouped_shapes = group_nearby_shapes(all_shapes, max_distance=15)
+
+        return {"drawings": grouped_shapes}
+
+    except Exception as e:
+        return {"error": "Unexpected error", "exception": str(e)}
 
     
 # -----------------------
