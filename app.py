@@ -50,6 +50,8 @@ async def list_images(request: Request):
 # -----------------------
 # /list-drawings endpoint
 # -----------------------
+from typing import List, Dict
+
 def rect_union(rects: List[fitz.Rect]) -> fitz.Rect:
     """Return the union rectangle covering all input rectangles."""
     if not rects:
