@@ -47,6 +47,25 @@ async def list_images(request: Request):
     except Exception as e:
         return {"error": "Unexpected error", "exception": str(e)}
 
+# -----------------------
+# /list-drawings endpoint
+# -----------------------
+@app.post("/list-drawings")
+async def list_drawings(request: Request):
+    body = await request.json()
+    pdf_bytes = base64.b64decode(body["pdf_base64"])
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    out = []
+    for i, page in enumerate(doc):
+        for d in page.get_drawings():
+            out.append({
+                "page": i,
+                "rect": list(d["rect"]),
+                "type": d["type"]
+            })
+    return out
+
     
 # -----------------------
 # /replace-image endpoint
