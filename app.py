@@ -48,6 +48,140 @@ async def list_images(request: Request):
         return {"error": "Unexpected error", "exception": str(e)}
 
 # -----------------------
+# /list-images-with-position endpoint
+# -----------------------
+@app.post("/list-images-with-position")
+async def list_images_with_position(request: Request):
+    try:
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+
+        if not pdf_base64:
+            return {"error": "pdf_base64 missing"}
+
+        try:
+            doc = open_pdf_from_base64(pdf_base64)
+        except Exception as e:
+            return {"error": "PDF open failed", "exception": str(e)}
+
+        images = []
+
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+
+            try:
+                imgs = page.get_images(full=True)
+            except Exception as e:
+                doc.close()
+                return {
+                    "error": "get_images failed",
+                    "page_number": page_index,
+                    "exception": str(e)
+                }
+
+            for img in imgs:
+                xref = img[0]
+
+                try:
+                    rects = page.get_image_rects(xref)
+                except Exception as e:
+                    images.append({
+                        "page_number": page_index,
+                        "image_xref": xref,
+                        "error": f"get_image_rects failed: {e}"
+                    })
+                    continue
+
+                for rect in rects:
+                    images.append({
+                        "page_number": page_index,
+                        "image_xref": xref,
+                        "width": rect.width,
+                        "height": rect.height
+                    })
+
+        doc.close()
+        return {"images": images}
+
+    except Exception as e:
+        return {"error": "Unexpected server error", "exception": str(e)}
+
+# -----------------------
+# /overlay-vector-logo endpoint
+# -----------------------
+@app.post("/overlay-vector-logo")
+async def overlay_vector_logo(request: Request):
+    try:
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+        logo_base64 = body.get("logo_base64")
+
+        if not pdf_base64 or not logo_base64:
+            return {"error": "pdf_base64 or logo_base64 missing"}
+
+        try:
+            doc = open_pdf_from_base64(pdf_base64)
+        except Exception as e:
+            return {"error": "PDF open failed", "exception": str(e)}
+
+        try:
+            logo_bytes = base64.b64decode(logo_base64)
+        except Exception as e:
+            doc.close()
+            return {"error": "Logo base64 decode failed", "exception": str(e)}
+
+        try:
+            page = doc[0]
+        except Exception as e:
+            doc.close()
+            return {"error": "Page access failed", "exception": str(e)}
+
+        try:
+            drawings = page.get_drawings()
+            if not drawings:
+                doc.close()
+                return {"error": "No vector drawings found"}
+        except Exception as e:
+            doc.close()
+            return {"error": "get_drawings failed", "exception": str(e)}
+
+        try:
+            min_x = min(d["rect"].x0 for d in drawings)
+            min_y = min(d["rect"].y0 for d in drawings)
+            max_x = max(d["rect"].x1 for d in drawings)
+            max_y = max(d["rect"].y1 for d in drawings)
+            logo_rect = fitz.Rect(min_x, min_y, max_x, max_y)
+        except Exception as e:
+            doc.close()
+            return {"error": "Vector bounds calculation failed", "exception": str(e)}
+
+        try:
+            page.insert_image(
+                logo_rect,
+                stream=logo_bytes,
+                overlay=True
+            )
+        except Exception as e:
+            doc.close()
+            return {"error": "insert_image failed", "exception": str(e)}
+
+        try:
+            out_bytes = doc.tobytes()
+        except Exception as e:
+            doc.close()
+            return {"error": "PDF serialization failed", "exception": str(e)}
+
+        doc.close()
+
+        return {
+            "pdf_base64": base64.b64encode(out_bytes).decode("ascii")
+        }
+
+    except Exception as e:
+        return {"error": "Unexpected server error", "exception": str(e)}
+
+    
+# -----------------------
 # /detect-artwork endpoint
 # -----------------------
 def open_pdf_from_base64(pdf_base64: str):
