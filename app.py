@@ -52,48 +52,53 @@ async def list_images(request: Request):
 # -----------------------
 @app.post("/detect-artwork")
 async def detect_artwork(request: Request):
-    """
-    Detects visual content:
-    - raster images
-    - vector logos / shapes
-    - rendered fallback (guaranteed)
-    """
-
     body = await request.json()
     pdf_base64 = body.get("pdf_base64")
 
     if not pdf_base64:
         return {"error": "pdf_base64 missing"}
 
-    doc = open_pdf_from_base64(pdf_base64)
+    try:
+        doc = open_pdf_from_base64(pdf_base64)
+    except Exception as e:
+        return {"error": "PDF open failed", "exception": str(e)}
 
-    results = []
+    pages = []
 
     for page_index in range(len(doc)):
         page = doc[page_index]
 
-        raster_images = page.get_images(full=True)
-        vector_drawings = page.get_drawings()
+        # Raster images (very safe)
+        try:
+            raster_images = page.get_images(full=True)
+        except Exception as e:
+            raster_images = []
+            raster_error = str(e)
+        else:
+            raster_error = None
 
-        has_raster = len(raster_images) > 0
-        has_vector = len(vector_drawings) > 0
+        # Vector drawings (can crash!)
+        try:
+            vector_drawings = page.get_drawings()
+        except Exception as e:
+            vector_drawings = []
+            vector_error = str(e)
+        else:
+            vector_error = None
 
-        # Render page as fallback (logo always appears here)
-        pix = page.get_pixmap(dpi=200)
-        img_bytes = pix.tobytes("png")
-        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-        results.append({
+        pages.append({
             "page_number": page_index,
-            "has_raster_images": has_raster,
+            "has_raster_images": len(raster_images) > 0,
             "raster_image_count": len(raster_images),
-            "has_vector_artwork": has_vector,
+            "raster_error": raster_error,
+            "has_vector_artwork": len(vector_drawings) > 0,
             "vector_object_count": len(vector_drawings),
-            "rendered_page_base64": img_base64
+            "vector_error": vector_error
         })
 
     doc.close()
-    return {"pages": results}
+    return {"pages": pages}
+
     
 # -----------------------
 # /list-drawings endpoint
