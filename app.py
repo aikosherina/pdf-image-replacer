@@ -48,6 +48,54 @@ async def list_images(request: Request):
         return {"error": "Unexpected error", "exception": str(e)}
 
 # -----------------------
+# /detect-artwork endpoint
+# -----------------------
+@app.post("/detect-artwork")
+async def detect_artwork(request: Request):
+    """
+    Detects visual content:
+    - raster images
+    - vector logos / shapes
+    - rendered fallback (guaranteed)
+    """
+
+    body = await request.json()
+    pdf_base64 = body.get("pdf_base64")
+
+    if not pdf_base64:
+        return {"error": "pdf_base64 missing"}
+
+    doc = open_pdf_from_base64(pdf_base64)
+
+    results = []
+
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+
+        raster_images = page.get_images(full=True)
+        vector_drawings = page.get_drawings()
+
+        has_raster = len(raster_images) > 0
+        has_vector = len(vector_drawings) > 0
+
+        # Render page as fallback (logo always appears here)
+        pix = page.get_pixmap(dpi=200)
+        img_bytes = pix.tobytes("png")
+        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+        results.append({
+            "page_number": page_index,
+            "has_raster_images": has_raster,
+            "raster_image_count": len(raster_images),
+            "has_vector_artwork": has_vector,
+            "vector_object_count": len(vector_drawings),
+            "rendered_page_base64": img_base64
+        })
+
+    doc.close()
+    return {"pages": results}
+    
+# -----------------------
 # /list-drawings endpoint
 # -----------------------
 from typing import List, Dict
