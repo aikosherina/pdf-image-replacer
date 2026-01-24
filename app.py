@@ -50,6 +50,18 @@ async def list_images(request: Request):
 # -----------------------
 # /detect-artwork endpoint
 # -----------------------
+def open_pdf_from_base64(pdf_base64: str):
+    try:
+        pdf_bytes = base64.b64decode(pdf_base64)
+    except Exception as e:
+        raise ValueError(f"Base64 decode failed: {e}")
+
+    if not pdf_bytes.startswith(b"%PDF"):
+        raise ValueError("Not a valid PDF")
+
+    return fitz.open(stream=pdf_bytes, filetype="pdf")
+
+
 @app.post("/detect-artwork")
 async def detect_artwork(request: Request):
     body = await request.json()
@@ -68,23 +80,21 @@ async def detect_artwork(request: Request):
     for page_index in range(len(doc)):
         page = doc[page_index]
 
-        # Raster images (very safe)
+        # Raster images (safe)
         try:
             raster_images = page.get_images(full=True)
+            raster_error = None
         except Exception as e:
             raster_images = []
             raster_error = str(e)
-        else:
-            raster_error = None
 
-        # Vector drawings (can crash!)
+        # Vector drawings (can fail on some PDFs)
         try:
             vector_drawings = page.get_drawings()
+            vector_error = None
         except Exception as e:
             vector_drawings = []
             vector_error = str(e)
-        else:
-            vector_error = None
 
         pages.append({
             "page_number": page_index,
@@ -98,6 +108,7 @@ async def detect_artwork(request: Request):
 
     doc.close()
     return {"pages": pages}
+
 
     
 # -----------------------
