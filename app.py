@@ -204,63 +204,80 @@ async def detect_artwork(request: Request):
         if not pdf_base64:
             return {"error": "pdf_base64 missing"}
 
-        doc = open_pdf_from_base64(pdf_base64)
-        results = []
+        try:
+            doc = open_pdf_from_base64(pdf_base64)
+        except Exception as e:
+            return {"error": "PDF open failed", "exception": str(e)}
+
+        pages = []
 
         for page_index in range(len(doc)):
             page = doc[page_index]
 
-            # Raster images
+            # -----------------------
+            # 1️⃣ Raster images
+            # -----------------------
             try:
                 raster_images = page.get_images(full=True)
-            except:
+                raster_info = [
+                    {
+                        "image_xref": img[0],
+                        "width": img[2],
+                        "height": img[3]
+                    } for img in raster_images
+                ]
+            except Exception as e:
                 raster_images = []
+                raster_info = []
+                raster_error = str(e)
+            else:
+                raster_error = None
 
-            # Vector drawings
+            # -----------------------
+            # 2️⃣ Form XObjects (vector graphics inside the PDF)
+            # -----------------------
             try:
-                drawings = page.get_drawings()
-            except:
-                drawings = []
+                xobject_list = []
+                # Iterate all XObjects
+                for xref in doc.get_xref_objects():
+                    if xref[1] == "XObject":
+                        # Check subtype
+                        subtype = doc.xref_object(xref[0], compressed=False)
+                        if b"/Subtype /Form" in subtype:
+                            # Form XObject detected
+                            bbox_start = subtype.find(b"/BBox [")
+                            if bbox_start != -1:
+                                bbox_end = subtype.find(b"]", bbox_start)
+                                bbox_str = subtype[bbox_start+7:bbox_end].decode("ascii").strip()
+                                try:
+                                    x0, y0, x1, y1 = map(float, bbox_str.split())
+                                    xobject_list.append({
+                                        "xref": xref[0],
+                                        "x0": x0,
+                                        "y0": y0,
+                                        "x1": x1,
+                                        "y1": y1,
+                                        "width": x1 - x0,
+                                        "height": y1 - y0
+                                    })
+                                except:
+                                    continue
+            except Exception as e:
+                xobject_list = []
+                xobject_error = str(e)
+            else:
+                xobject_error = None
 
-            # Collect bounding boxes
-            bboxes = [d["rect"] for d in drawings if d.get("type") in [0,1,2,3]]
-
-            filtered = [r for r in bboxes if r.width > 10 and r.height > 10]
-
-            # Merge overlapping or very close rectangles
-            merged_boxes = []
-            for r in filtered:
-                merged = False
-                for i, mr in enumerate(merged_boxes):
-                    if mr.intersects(r) or mr.tl.dist(r.tl) < 20:  # 20pt threshold
-                        merged_boxes[i] = mr | r
-                        merged = True
-                        break
-                if not merged:
-                    merged_boxes.append(r)
-            
-            # Convert to JSON
-            vector_results = [
-                {
-                    "x0": r.x0,
-                    "y0": r.y0,
-                    "x1": r.x1,
-                    "y1": r.y1,
-                    "width": r.width,
-                    "height": r.height
-                } for r in merged_boxes
-            ]
-
-            results.append({
+            pages.append({
                 "page_number": page_index,
                 "has_raster_images": len(raster_images) > 0,
                 "raster_image_count": len(raster_images),
-                "vector_logo_candidates": vector_results,
-                "vector_count": len(vector_results)
+                "vector_logo_candidates": xobject_list,
+                "vector_count": len(xobject_list)
             })
 
         doc.close()
-        return {"pages": results}
+        return {"pages": pages}
 
     except Exception as e:
         return {"error": "Unexpected error", "exception": str(e)}
