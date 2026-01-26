@@ -4,3 +4,4 @@ pymupdf
 Pillow
 ImageHash
 numpy
+opencv-python
