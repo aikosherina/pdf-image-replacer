@@ -57,7 +57,7 @@ async def list_images(request: Request):
 # /detect-logo endpoint
 # -----------------------
 # Load your logo template once (text logo as image)
-logo_path = Path(__file__).parent / "oldLogo.png"
+logo_path = Path(__file__).parent / "OldLogo.png"
 logo_template = cv2.imread(str(logo_path), cv2.IMREAD_GRAYSCALE)
 template_w, template_h = logo_template.shape[::-1]
 
