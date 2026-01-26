@@ -1,6 +1,11 @@
 from fastapi import FastAPI, Request
 import fitz
 import base64
+from PIL import Image
+import io
+import imagehash
+import numpy as np
+from pathlib import Path
 
 app = FastAPI()
 
@@ -43,6 +48,69 @@ async def list_images(request: Request):
 
         doc.close()
         return {"images": images}
+
+    except Exception as e:
+        return {"error": "Unexpected error", "exception": str(e)}
+
+# -----------------------
+# /detect-logo endpoint
+# -----------------------
+# Load logo once when the app starts
+logo_path = Path(__file__).parent / "OldLogo.png"
+logo_img = Image.open(logo_path).convert("RGB")
+logo_hash = imagehash.phash(logo_img)
+
+@app.post("/detect-logo")
+async def detect_logo(request: Request):
+    try:
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+        if not pdf_base64:
+            return {"error": "pdf_base64 missing"}
+
+        # Decode and open PDF
+        try:
+            pdf_bytes = base64.b64decode(pdf_base64)
+            if not pdf_bytes.startswith(b"%PDF"):
+                return {"error": "Not a valid PDF"}
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        except Exception as e:
+            return {"error": "Failed to open PDF", "exception": str(e)}
+
+        detected = []
+
+        for page_number in range(len(doc)):
+            page = doc[page_number]
+            images = page.get_images(full=True)
+
+            for img_info in images:
+                xref = img_info[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+
+                # Open image from bytes
+                image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+                # Compare hashes
+                img_hash = imagehash.phash(image_pil)
+                hash_diff = logo_hash - img_hash
+
+                # Threshold: 5 is a good start, adjust if needed
+                if hash_diff <= 5:
+                    detected.append({
+                        "page": page_number,
+                        "xref": xref,
+                        "hash_difference": hash_diff,
+                        "width": img_info[2],
+                        "height": img_info[3]
+                    })
+
+        doc.close()
+
+        if detected:
+            return {"detected_logos": detected}
+        else:
+            return {"detected_logos": [], "message": "No matching logos found"}
 
     except Exception as e:
         return {"error": "Unexpected error", "exception": str(e)}
