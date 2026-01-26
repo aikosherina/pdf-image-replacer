@@ -5,6 +5,8 @@ from PIL import Image
 import io
 import imagehash
 from pathlib import Path
+import cv2
+import numpy as np
 
 app = FastAPI()
 
@@ -54,10 +56,13 @@ async def list_images(request: Request):
 # -----------------------
 # /detect-logo endpoint
 # -----------------------
-# Load your logo once
-logo_path = Path(__file__).parent / "OldLogo.png"
-logo_img = Image.open(logo_path).convert("RGB")
-logo_hash = imagehash.phash(logo_img)
+# Load your logo template once (text logo as image)
+logo_path = Path(__file__).parent / "oldLogo.png"
+logo_template = cv2.imread(str(logo_path), cv2.IMREAD_GRAYSCALE)
+template_w, template_h = logo_template.shape[::-1]
+
+# Template matching threshold
+MATCH_THRESHOLD = 0.8  # adjust 0.7–0.9 depending on logo quality
 
 @app.post("/detect-logo")
 async def detect_logo(request: Request):
@@ -67,7 +72,7 @@ async def detect_logo(request: Request):
         if not pdf_base64:
             return {"error": "pdf_base64 missing"}
 
-        # Decode and open PDF
+        # Decode PDF
         try:
             pdf_bytes = base64.b64decode(pdf_base64)
             if not pdf_bytes.startswith(b"%PDF"):
@@ -78,53 +83,44 @@ async def detect_logo(request: Request):
 
         detected = []
 
-        for page_number in range(len(doc)):
-            page = doc[page_number]
-
-            # ---------- 1️⃣ Raster images ----------
-            for img_info in page.get_images(full=True):
-                xref = img_info[0]
-                base_image = doc.extract_image(xref)
-                image_bytes = base_image["image"]
-                image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                img_hash = imagehash.phash(image_pil)
-                hash_diff = logo_hash - img_hash
-                if hash_diff <= 10:  # threshold for black-and-white or resized
-                    detected.append({
-                        "page": page_number,
-                        "type": "raster",
-                        "xref": xref,
-                        "hash_difference": hash_diff,
-                        "width": img_info[2],
-                        "height": img_info[3]
-                    })
-
-            # ---------- 2️⃣ Render full page (vector graphics included) ----------
+        for page_number, page in enumerate(doc):
             try:
-                mat = fitz.Matrix(2, 2)  # scale up for better accuracy
-                pix = page.get_pixmap(matrix=mat)
-                image_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                img_hash = imagehash.phash(image_pil)
-                hash_diff = logo_hash - img_hash
-                if hash_diff <= 10:
+                # Render page as high-resolution image
+                mat = fitz.Matrix(2, 2)  # scale 2x for accuracy
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                
+                # Convert pixmap to numpy grayscale image
+                img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+                if pix.n == 4:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+                elif pix.n == 3:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                else:
+                    img = img  # already grayscale
+
+                # Template matching
+                res = cv2.matchTemplate(img, logo_template, cv2.TM_CCOEFF_NORMED)
+                loc = np.where(res >= MATCH_THRESHOLD)
+                matches = []
+
+                for pt in zip(*loc[::-1]):  # (x, y) coordinates
+                    matches.append({
+                        "x": int(pt[0]),
+                        "y": int(pt[1]),
+                        "width": template_w,
+                        "height": template_h,
+                        "match_score": float(res[pt[1], pt[0]])
+                    })
+
+                if matches:
                     detected.append({
                         "page": page_number,
-                        "type": "vector",
-                        "hash_difference": hash_diff,
-                        "width": pix.width,
-                        "height": pix.height
+                        "type": "text_logo",
+                        "matches": matches
                     })
-            except Exception:
-                pass
-
-            # ---------- 3️⃣ Text search ----------
-            page_text = page.get_text("text")
-            if "QIOPTIQ" in page_text:
-                detected.append({
-                    "page": page_number,
-                    "type": "text",
-                    "content": "QIOPTIQ"
-                })
+            except Exception as e:
+                # skip page if rendering/matching fails
+                continue
 
         doc.close()
 
@@ -135,6 +131,7 @@ async def detect_logo(request: Request):
 
     except Exception as e:
         return {"error": "Unexpected error", "exception": str(e)}
+
 
 # -----------------------
 # /list-images-with-position endpoint
