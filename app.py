@@ -198,51 +198,77 @@ def open_pdf_from_base64(pdf_base64: str):
 
 @app.post("/detect-artwork")
 async def detect_artwork(request: Request):
-    body = await request.json()
-    pdf_base64 = body.get("pdf_base64")
-
-    if not pdf_base64:
-        return {"error": "pdf_base64 missing"}
-
     try:
+        body = await request.json()
+        pdf_base64 = body.get("pdf_base64")
+        if not pdf_base64:
+            return {"error": "pdf_base64 missing"}
+
         doc = open_pdf_from_base64(pdf_base64)
+        results = []
+
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+
+            # Raster images
+            try:
+                raster_images = page.get_images(full=True)
+            except:
+                raster_images = []
+
+            # Vector drawings
+            try:
+                drawings = page.get_drawings()
+            except:
+                drawings = []
+
+            # Collect bounding boxes
+            bboxes = [d["rect"] for d in drawings if d.get("type") in [0, 1, 2, 3]]  # path, fill, stroke
+
+            # Filter by size (example: min area 1000px², max area 50000px²)
+            filtered = [
+                r for r in bboxes
+                if 1000 < r.width * r.height < 50000 and 0.2 < r.width / r.height < 5
+            ]
+
+            # Merge overlapping boxes (cluster nearby paths)
+            merged_boxes = []
+            for r in filtered:
+                merged = False
+                for i, mr in enumerate(merged_boxes):
+                    if mr.intersects(r) or mr.tl.dist(r.tl) < 10:  # distance threshold
+                        merged_boxes[i] = mr | r  # union
+                        merged = True
+                        break
+                if not merged:
+                    merged_boxes.append(r)
+
+            # Convert to JSON-friendly format
+            vector_results = [
+                {
+                    "x0": r.x0,
+                    "y0": r.y0,
+                    "x1": r.x1,
+                    "y1": r.y1,
+                    "width": r.width,
+                    "height": r.height
+                }
+                for r in merged_boxes
+            ]
+
+            results.append({
+                "page_number": page_index,
+                "has_raster_images": len(raster_images) > 0,
+                "raster_image_count": len(raster_images),
+                "vector_logo_candidates": vector_results,
+                "vector_count": len(vector_results)
+            })
+
+        doc.close()
+        return {"pages": results}
+
     except Exception as e:
-        return {"error": "PDF open failed", "exception": str(e)}
-
-    pages = []
-
-    for page_index in range(len(doc)):
-        page = doc[page_index]
-
-        # Raster images (safe)
-        try:
-            raster_images = page.get_images(full=True)
-            raster_error = None
-        except Exception as e:
-            raster_images = []
-            raster_error = str(e)
-
-        # Vector drawings (can fail on some PDFs)
-        try:
-            vector_drawings = page.get_drawings()
-            vector_error = None
-        except Exception as e:
-            vector_drawings = []
-            vector_error = str(e)
-
-        pages.append({
-            "page_number": page_index,
-            "has_raster_images": len(raster_images) > 0,
-            "raster_image_count": len(raster_images),
-            "raster_error": raster_error,
-            "has_vector_artwork": len(vector_drawings) > 0,
-            "vector_object_count": len(vector_drawings),
-            "vector_error": vector_error
-        })
-
-    doc.close()
-    return {"pages": pages}
-
+        return {"error": "Unexpected error", "exception": str(e)}
 
     
 # -----------------------
