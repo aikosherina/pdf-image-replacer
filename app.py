@@ -54,7 +54,7 @@ async def list_images(request: Request):
 # -----------------------
 # /detect-logo endpoint
 # -----------------------
-# Load logo once when the app starts
+# Load your logo once
 logo_path = Path(__file__).parent / "OldLogo.png"
 logo_img = Image.open(logo_path).convert("RGB")
 logo_hash = imagehash.phash(logo_img)
@@ -80,29 +80,58 @@ async def detect_logo(request: Request):
 
         for page_number in range(len(doc)):
             page = doc[page_number]
-            images = page.get_images(full=True)
 
+            # ---------- 1️⃣ Raster images ----------
+            images = page.get_images(full=True)
             for img_info in images:
                 xref = img_info[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
-
-                # Open image from bytes
                 image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-                # Compare hashes
                 img_hash = imagehash.phash(image_pil)
                 hash_diff = logo_hash - img_hash
-
-                # Threshold: 5 is a good start, adjust if needed
-                if hash_diff <= 5:
+                if hash_diff <= 10:  # Increased threshold for robustness
                     detected.append({
                         "page": page_number,
+                        "type": "raster",
                         "xref": xref,
                         "hash_difference": hash_diff,
                         "width": img_info[2],
                         "height": img_info[3]
                     })
+
+            # ---------- 2️⃣ Vector XObjects ----------
+            for xref in doc.get_xref_objects():
+                if xref[1] == "XObject":
+                    subtype = doc.xref_object(xref[0], compressed=False)
+                    if b"/Subtype /Form" in subtype:
+                        try:
+                            # Render XObject to pixmap
+                            mat = fitz.Matrix(2, 2)  # scale up for better hash
+                            pix = page.get_pixmap(matrix=mat, clip=fitz.Rect(page.rect))
+                            image_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                            img_hash = imagehash.phash(image_pil)
+                            hash_diff = logo_hash - img_hash
+                            if hash_diff <= 10:
+                                detected.append({
+                                    "page": page_number,
+                                    "type": "vector",
+                                    "xref": xref[0],
+                                    "hash_difference": hash_diff,
+                                    "width": pix.width,
+                                    "height": pix.height
+                                })
+                        except Exception:
+                            continue
+
+            # ---------- 3️⃣ Text search ----------
+            page_text = page.get_text("text")
+            if "QIOPTIQ" in page_text:
+                detected.append({
+                    "page": page_number,
+                    "type": "text",
+                    "content": "QIOPTIQ"
+                })
 
         doc.close()
 
