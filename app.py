@@ -223,27 +223,23 @@ async def detect_artwork(request: Request):
                 drawings = []
 
             # Collect bounding boxes
-            bboxes = [d["rect"] for d in drawings if d.get("type") in [0, 1, 2, 3]]  # path, fill, stroke
+            bboxes = [d["rect"] for d in drawings if d.get("type") in [0,1,2,3]]
 
-            # Filter by size (example: min area 1000px², max area 50000px²)
-            filtered = [
-                r for r in bboxes
-                if 1000 < r.width * r.height < 50000 and 0.2 < r.width / r.height < 5
-            ]
+            filtered = [r for r in bboxes if r.width > 10 and r.height > 10]
 
-            # Merge overlapping boxes (cluster nearby paths)
+            # Merge overlapping or very close rectangles
             merged_boxes = []
             for r in filtered:
                 merged = False
                 for i, mr in enumerate(merged_boxes):
-                    if mr.intersects(r) or mr.tl.dist(r.tl) < 10:  # distance threshold
-                        merged_boxes[i] = mr | r  # union
+                    if mr.intersects(r) or mr.tl.dist(r.tl) < 20:  # 20pt threshold
+                        merged_boxes[i] = mr | r
                         merged = True
                         break
                 if not merged:
                     merged_boxes.append(r)
-
-            # Convert to JSON-friendly format
+            
+            # Convert to JSON
             vector_results = [
                 {
                     "x0": r.x0,
@@ -252,8 +248,7 @@ async def detect_artwork(request: Request):
                     "y1": r.y1,
                     "width": r.width,
                     "height": r.height
-                }
-                for r in merged_boxes
+                } for r in merged_boxes
             ]
 
             results.append({
