@@ -4,7 +4,6 @@ import base64
 from PIL import Image
 import io
 import imagehash
-import numpy as np
 from pathlib import Path
 
 app = FastAPI()
