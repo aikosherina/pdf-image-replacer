@@ -82,15 +82,14 @@ async def detect_logo(request: Request):
             page = doc[page_number]
 
             # ---------- 1️⃣ Raster images ----------
-            images = page.get_images(full=True)
-            for img_info in images:
+            for img_info in page.get_images(full=True):
                 xref = img_info[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
                 img_hash = imagehash.phash(image_pil)
                 hash_diff = logo_hash - img_hash
-                if hash_diff <= 10:  # Increased threshold for robustness
+                if hash_diff <= 10:  # threshold for black-and-white or resized
                     detected.append({
                         "page": page_number,
                         "type": "raster",
@@ -100,29 +99,23 @@ async def detect_logo(request: Request):
                         "height": img_info[3]
                     })
 
-            # ---------- 2️⃣ Vector XObjects ----------
-            for xref in doc.get_xref_objects():
-                if xref[1] == "XObject":
-                    subtype = doc.xref_object(xref[0], compressed=False)
-                    if b"/Subtype /Form" in subtype:
-                        try:
-                            # Render XObject to pixmap
-                            mat = fitz.Matrix(2, 2)  # scale up for better hash
-                            pix = page.get_pixmap(matrix=mat, clip=fitz.Rect(page.rect))
-                            image_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                            img_hash = imagehash.phash(image_pil)
-                            hash_diff = logo_hash - img_hash
-                            if hash_diff <= 10:
-                                detected.append({
-                                    "page": page_number,
-                                    "type": "vector",
-                                    "xref": xref[0],
-                                    "hash_difference": hash_diff,
-                                    "width": pix.width,
-                                    "height": pix.height
-                                })
-                        except Exception:
-                            continue
+            # ---------- 2️⃣ Render full page (vector graphics included) ----------
+            try:
+                mat = fitz.Matrix(2, 2)  # scale up for better accuracy
+                pix = page.get_pixmap(matrix=mat)
+                image_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img_hash = imagehash.phash(image_pil)
+                hash_diff = logo_hash - img_hash
+                if hash_diff <= 10:
+                    detected.append({
+                        "page": page_number,
+                        "type": "vector",
+                        "hash_difference": hash_diff,
+                        "width": pix.width,
+                        "height": pix.height
+                    })
+            except Exception:
+                pass
 
             # ---------- 3️⃣ Text search ----------
             page_text = page.get_text("text")
